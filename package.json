@@ -1,0 +1,35 @@
+{
+    "name": "bedrock-ddui-forms",
+    "version": "1.0.0",
+    "description": "A declarative layer for creating DDUI forms (CustomForm) from @minecraft/server-ui based on objects.",
+    "type": "module",
+    "main": "./src/index.js",
+    "exports": {
+        ".": "./src/index.js"
+    },
+    "files": [
+        "src",
+        "README.md",
+        "README.es.md"
+    ],
+    "scripts": {
+        "test": "node --import ./test/register-stubs.mjs --test \"test/*.test.js\""
+    },
+    "author": "victorsigma",
+    "license": "ISC",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/victorsigma/Bedrock-DDUI-Forms.git"
+    },
+    "keywords": [
+        "minecraft",
+        "bedrock",
+        "ddui",
+        "server-ui",
+        "forms",
+        "script-api"
+    ],
+    "peerDependencies": {
+        "@minecraft/server-ui": "2.2.0"
+    }
+}
