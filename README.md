@@ -24,6 +24,7 @@ Instead of chaining calls on `CustomForm`, you describe a view as data and let a
 - **Declarative views**: a form is an object with a `title` and a `content` array.
 - **Typed with the official API**: models are JSDoc typedefs that reuse the types of `@minecraft/server-ui` (`ButtonOptions`, `SliderOptions`, …), so they stay in sync with the module.
 - **Simple navigation**: a button can open another view with `to`, composed with `onClick`.
+- **Router**: register views by name, pass parameters between them and go back with `"back"`.
 - **Easy to extend**: adding a new element type is one entry in a lookup table and one function.
 - **Safe fallback**: an unsupported `type` renders a visible label and logs a warning instead of breaking the whole form.
 
@@ -44,7 +45,7 @@ BP/
   manifest.json
   scripts/
     main.js
-    lib/bedrock-ddui-forms/
+    libs/bedrock-ddui-forms/
       index.js
       core/
       models/
@@ -151,6 +152,105 @@ A button can open another view with `to`. It runs **after** `onClick`, once the 
 - If the button does something else, use `onClick`, and add `to` if it should also navigate.
 - Inside `onClick` and `image.options.onClick`, `this` is the `CustomForm`, so `this.close()` works if you need to close without opening anything.
 
+For many views, parameters and an automatic back button, see [Router](#router-named-views-and-back).
+
+## Router: named views and "back"
+
+When your menus grow, wiring every button to the next `openX(player)` gets repetitive. `createRouter` registers your views by name, lets buttons point to them, and keeps a **history per player** so a button can go back.
+
+```js
+import { ObservableBoolean } from "@minecraft/server-ui";
+import { createRouter } from "bedrock-ddui-forms/index";   // or from your libs/ folder
+
+const router = createRouter({
+    menu: (player) => ({
+        title: "Menu",
+        content: [
+            { type: "button", label: "My profile", to: { view: "profile", params: { name: player.name } } },
+            { type: "button", label: "Settings", to: "settings" },
+            { type: "close-button" }
+        ]
+    }),
+
+    profile: (player, params) => ({
+        title: `Profile: ${params.name}`,
+        content: [
+            { type: "label", text: "Nothing here yet." },
+            { type: "button", label: "Back", to: "back" }
+        ]
+    }),
+
+    settings: (player) => ({
+        title: "Settings",
+        content: [
+            { type: "toggle", label: "Notifications", toggled: new ObservableBoolean(true, { clientWritable: true }) },
+            { type: "button", label: "Back", to: "back" }
+        ]
+    })
+});
+
+// Start a flow
+router.open(player, "menu");
+```
+
+Each view is a function `(player, params) => formData`. It returns the same object you would give to `customFormRender`, including `onExit`.
+
+### Values accepted by `to`
+
+| `to` | Result |
+| --- | --- |
+| `"settings"` | Opens the view registered with that name. |
+| `{ view: "profile", params: { ... } }` | Same, passing `params` to the view. |
+| `"back"` | Returns to the previous view in the player's history. If there is none, the form just closes. |
+| a function | Works like the normal `to` (see [Navigation](#navigation)), but it is **outside** the router: the player's history is discarded. |
+
+If you use a view name that was not registered, the router throws `Unknown View: "name"`.
+
+### Parameters
+
+`params` is the second argument of the view function. You can pass it from a button (`to: { view, params }`) or when you start the flow (`router.open(player, "profile", { name: "Alex" })`).
+
+What you pass is up to you. The router stores the `params` of every step in the history and uses them again when going back, so the view is rebuilt with the same `params`. Because of that, plain data (names, ids, numbers) is the safest choice: an entity or a player object stored there may no longer be valid when the player returns to that view.
+
+Going back **rebuilds** the view by calling its function again, so the values the player typed (your `Observable`s) are not kept: they return to their initial values.
+
+### Router options
+
+```js
+const router = createRouter(views, { onInvalid: "skip" });
+```
+
+The second argument takes the same options as the third argument of `customFormRender` (see [Validation and error messages](#validation-and-error-messages)) and applies to every view.
+
+### What `open` returns
+
+`router.open(...)` returns a promise that resolves with the closing reason of **the view it opened**, not of the whole flow. When a button navigates, that view is closed by the server, so it resolves with `ServerClosed`. The `onExit` of each view follows the same rule described in [Closing a view](#closing-a-view-onexit).
+
+### History lifetime and cleanup
+
+The router keeps each player's history in memory. It is cleared when:
+
+- the player closes the form,
+- a form is closed from code without navigating (for example `this.close()` inside `onClick`),
+- you call `router.open(...)` again: a new flow always starts clean,
+- you call `router.clear(playerId)`.
+
+If a player leaves the server in the middle of a flow, their history stays in memory until one of those things happens. It is a small entry per player, but you can release it when they leave:
+
+```js
+import { world } from "@minecraft/server";
+
+world.afterEvents.playerLeave.subscribe(({ playerId }) => router.clear(playerId));
+```
+
+The library does not subscribe to this event for you, on purpose:
+
+- it keeps the library dependent only on `@minecraft/server-ui`,
+- creating a router does not hook any global event,
+- you decide how and when to clean up for your own addon.
+
+Subscribe **once** (as above), not once per view: a subscription per view would pile up while players stay online.
+
 ## Reading values
 
 The values are the `Observable` objects you create, so keep a reference and read them when you need them:
@@ -245,6 +345,7 @@ core/
   customFormRender.js     renders a view and shows it to the player
   propertiesFactory.js    maps each `type` to its CustomForm call
   validation.js           checks views and builds the error messages
+  createRouter.js         named views with a per-player "back" history
 models/properties/
   *.js                    JSDoc typedefs for each element
 ```

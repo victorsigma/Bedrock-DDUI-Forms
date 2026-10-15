@@ -1,6 +1,6 @@
 {
     "name": "bedrock-ddui-forms",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "A declarative layer for creating DDUI forms (CustomForm) from @minecraft/server-ui based on objects.",
     "type": "module",
     "main": "./src/index.js",

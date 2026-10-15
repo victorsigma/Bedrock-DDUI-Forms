@@ -24,6 +24,7 @@ En lugar de encadenar llamadas sobre `CustomForm`, describes la vista como datos
 - **Vistas declarativas**: un formulario es un objeto con `title` y un arreglo `content`.
 - **Tipado con la API oficial**: los modelos son typedefs de JSDoc que reutilizan los tipos de `@minecraft/server-ui` (`ButtonOptions`, `SliderOptions`, …), así que se mantienen sincronizados con el módulo.
 - **Navegación sencilla**: un botón puede abrir otra vista con `to`, combinable con `onClick`.
+- **Router**: registra vistas por nombre, pásales parámetros y vuelve atrás con `"back"`.
 - **Fácil de extender**: añadir un tipo de elemento nuevo es una entrada en una tabla y una función.
 - **Fallback seguro**: un `type` no soportado muestra un label visible y registra una advertencia, en vez de romper todo el formulario.
 
@@ -151,6 +152,105 @@ Un botón puede abrir otra vista con `to`. Se ejecuta **después** de `onClick`,
 - Si hace algo más, usa `onClick`, y añade `to` si además debe navegar.
 - Dentro de `onClick` y de `image.options.onClick`, `this` es el `CustomForm`, así que `this.close()` funciona si necesitas cerrar sin abrir nada.
 
+Para muchas vistas, parámetros y un botón de volver automático, mira el [Router](#router-vistas-con-nombre-y-atrás).
+
+## Router: vistas con nombre y "atrás"
+
+Cuando tus menús crecen, conectar cada botón con el siguiente `openX(player)` se vuelve repetitivo. `createRouter` registra tus vistas por nombre, permite que los botones apunten a ellas y guarda un **historial por jugador** para que un botón pueda volver atrás.
+
+```js
+import { ObservableBoolean } from "@minecraft/server-ui";
+import { createRouter } from "bedrock-ddui-forms/index";   // o desde tu carpeta libs/
+
+const router = createRouter({
+    menu: (player) => ({
+        title: "Menú",
+        content: [
+            { type: "button", label: "Mi perfil", to: { view: "profile", params: { name: player.name } } },
+            { type: "button", label: "Ajustes", to: "settings" },
+            { type: "close-button" }
+        ]
+    }),
+
+    profile: (player, params) => ({
+        title: `Perfil: ${params.name}`,
+        content: [
+            { type: "label", text: "Todavía no hay nada aquí." },
+            { type: "button", label: "Volver", to: "back" }
+        ]
+    }),
+
+    settings: (player) => ({
+        title: "Ajustes",
+        content: [
+            { type: "toggle", label: "Notificaciones", toggled: new ObservableBoolean(true, { clientWritable: true }) },
+            { type: "button", label: "Volver", to: "back" }
+        ]
+    })
+});
+
+// Iniciar un flujo
+router.open(player, "menu");
+```
+
+Cada vista es una función `(player, params) => formData`. Devuelve el mismo objeto que le darías a `customFormRender`, incluido `onExit`.
+
+### Valores que acepta `to`
+
+| `to` | Resultado |
+| --- | --- |
+| `"settings"` | Abre la vista registrada con ese nombre. |
+| `{ view: "profile", params: { ... } }` | Lo mismo, pasándole `params` a la vista. |
+| `"back"` | Vuelve a la vista anterior del historial del jugador. Si no hay ninguna, el formulario simplemente se cierra. |
+| una función | Funciona como el `to` normal (ver [Navegación](#navegación)), pero queda **fuera** del router: el historial del jugador se descarta. |
+
+Si usas el nombre de una vista que no registraste, el router lanza `Unknown View: "nombre"`.
+
+### Parámetros
+
+`params` es el segundo argumento de la función de la vista. Puedes pasarlos desde un botón (`to: { view, params }`) o al iniciar el flujo (`router.open(player, "profile", { name: "Alex" })`).
+
+Qué pasas es decisión tuya. El router guarda los `params` de cada paso en el historial y los vuelve a usar al volver atrás, de modo que la vista se reconstruye con los mismos `params`. Por eso los datos simples (nombres, ids, números) son la opción más segura: una entidad o un objeto de jugador guardado ahí puede dejar de ser válido cuando el jugador regrese a esa vista.
+
+Volver atrás **reconstruye** la vista llamando otra vez a su función, así que los valores que el jugador escribió (tus `Observable`) no se conservan: vuelven a sus valores iniciales.
+
+### Opciones del router
+
+```js
+const router = createRouter(views, { onInvalid: "skip" });
+```
+
+El segundo argumento acepta las mismas opciones que el tercer argumento de `customFormRender` (ver [Validación y mensajes de error](#validación-y-mensajes-de-error)) y se aplica a todas las vistas.
+
+### Qué devuelve `open`
+
+`router.open(...)` devuelve una promesa que se resuelve con el motivo de cierre de **la vista que abrió**, no de todo el flujo. Cuando un botón navega, el servidor cierra esa vista, así que se resuelve con `ServerClosed`. El `onExit` de cada vista sigue la misma regla descrita en [Cerrar una vista](#cerrar-una-vista-onexit).
+
+### Vida del historial y limpieza
+
+El router guarda en memoria el historial de cada jugador. Se borra cuando:
+
+- el jugador cierra el formulario,
+- un formulario se cierra desde código sin navegar (por ejemplo `this.close()` dentro de `onClick`),
+- vuelves a llamar a `router.open(...)`: un flujo nuevo siempre empieza limpio,
+- llamas a `router.clear(playerId)`.
+
+Si un jugador sale del servidor a mitad de un flujo, su historial queda en memoria hasta que ocurra una de esas cosas. Es una entrada pequeña por jugador, pero puedes liberarla cuando se vaya:
+
+```js
+import { world } from "@minecraft/server";
+
+world.afterEvents.playerLeave.subscribe(({ playerId }) => router.clear(playerId));
+```
+
+La librería no se suscribe a este evento por ti, a propósito:
+
+- así la librería depende solo de `@minecraft/server-ui`,
+- crear un router no engancha ningún evento global,
+- tú decides cómo y cuándo limpiar según tu addon.
+
+Suscríbete **una sola vez** (como arriba), no una vez por vista: una suscripción por vista se iría acumulando mientras los jugadores sigan conectados.
+
 ## Leer valores
 
 Los valores son los `Observable` que tú creas, así que guarda una referencia y léelos cuando los necesites:
@@ -247,6 +347,7 @@ core/
   customFormRender.js     renderiza una vista y la muestra al jugador
   propertiesFactory.js    asocia cada `type` con su llamada a CustomForm
   validation.js           revisa las vistas y construye los mensajes de error
+  createRouter.js         vistas con nombre y historial de "atrás" por jugador
 models/properties/
   *.js                    typedefs de JSDoc de cada elemento
 ```
